@@ -1,0 +1,238 @@
+// Press Brake Calibration — Scriptable
+// DS2 — 21 measured points, 3mm aluminium, 24mm die
+// Machine limits: 0° – 100°
+
+const DS = {
+  "DS2 (Measured)": {
+    raw: [
+      [29.93,7.5],[30.43,12.3],[30.93,17.3],[31.33,22.1],
+      [32,27],[32.5,31.5],[33,36],[33.5,41],[34,46.5],
+      [34.5,51],[35,56],[35.5,60],[36,64.7],
+      [36.5,68.6],[37,74],[37.5,77],
+      [37.93,80.09],[38.43,84],[38.92,89.2],[39.44,91.2],[39.93,96]
+    ],
+    measuredRange: [29.93, 39.93],
+    label: "21 pts · 3mm Ally · 24mm die"
+  }
+};
+
+const ANGLE_MIN = 0;
+const ANGLE_MAX = 100;
+
+// ── PCHIP ─────────────────────────────────────────────────────────────────────
+function pchipD(x, y) {
+  const n = x.length, d = [], h = [], delta = [];
+  for (let i = 0; i < n-1; i++) { h[i] = x[i+1]-x[i]; delta[i] = (y[i+1]-y[i])/h[i]; }
+  d[0] = delta[0]; d[n-1] = delta[n-2];
+  for (let i = 1; i < n-1; i++) {
+    if (delta[i-1]*delta[i] <= 0) { d[i] = 0; continue; }
+    const w1 = 2*h[i]+h[i-1], w2 = h[i]+2*h[i-1];
+    d[i] = (w1+w2)/(w1/delta[i-1]+w2/delta[i]);
+  }
+  return d;
+}
+function pchipEval(x, xp, yp, dp) {
+  let i = 0;
+  for (let k = 0; k < xp.length-2; k++) { if (xp[k] <= x) i = k; }
+  const h = xp[i+1]-xp[i], t = (x-xp[i])/h;
+  return (2*t*t*t-3*t*t+1)*yp[i]+(t*t*t-2*t*t+t)*h*dp[i]+
+         (-2*t*t*t+3*t*t)*yp[i+1]+(t*t*t-t*t)*h*dp[i+1];
+}
+function buildSpline(raw) {
+  const xs = raw.map(d => d[0]), ys = raw.map(d => d[1]), n = raw.length;
+  const d = pchipD(xs, ys);
+  function yToAngle(y) {
+    if (y <= xs[0])   return ys[0]   + d[0]   * (y - xs[0]);
+    if (y >= xs[n-1]) return ys[n-1] + d[n-1] * (y - xs[n-1]);
+    return pchipEval(y, xs, ys, d);
+  }
+  function angleToY(a) {
+    if (a <= ys[0])   return xs[0]   + (a - ys[0])   / d[0];
+    if (a >= ys[n-1]) return xs[n-1] + (a - ys[n-1]) / d[n-1];
+    let lo = xs[0], hi = xs[n-1];
+    for (let i = 0; i < 60; i++) {
+      const m = (lo+hi)/2, f = yToAngle(m);
+      if (Math.abs(f-a) < 1e-9) return m;
+      f < a ? lo = m : hi = m;
+    }
+    return (lo+hi)/2;
+  }
+  return { yToAngle, angleToY };
+}
+const splines = {};
+for (const key of Object.keys(DS)) splines[key] = buildSpline(DS[key].raw);
+
+// Y limits for 0° and 100° (used to bound table and validate input)
+const activeSpline = splines["DS2 (Measured)"];
+const Y_AT_0   = +activeSpline.angleToY(ANGLE_MIN).toFixed(2);
+const Y_AT_100 = +activeSpline.angleToY(ANGLE_MAX).toFixed(2);
+
+// ── Persistence ───────────────────────────────────────────────────────────────
+const STORE_KEY = "pressbrake_last";
+function saveLastLookup(obj) { Keychain.set(STORE_KEY, JSON.stringify(obj)); }
+function loadLastLookup() {
+  try { if (Keychain.contains(STORE_KEY)) return JSON.parse(Keychain.get(STORE_KEY)); } catch(e) {}
+  return null;
+}
+
+// ── Widget ────────────────────────────────────────────────────────────────────
+if (config.runsInWidget) {
+  const widget = new ListWidget();
+  widget.backgroundColor = new Color("#0d1117");
+  const last = loadLastLookup();
+  const t = widget.addText("Press Brake Cal");
+  t.textColor = new Color("#58a6ff"); t.font = Font.boldSystemFont(13);
+  widget.addSpacer(6);
+  if (last) {
+    const ds = widget.addText(last.dataset); ds.textColor = new Color("#8b949e"); ds.font = Font.systemFont(10);
+    widget.addSpacer(4);
+    const l1 = widget.addText("Y = " + last.y + " mm"); l1.textColor = new Color("#e6edf3"); l1.font = Font.mediumSystemFont(14);
+    const l2 = widget.addText(last.angle + "\u00b0"); l2.textColor = new Color("#3fb950"); l2.font = Font.boldSystemFont(22);
+    widget.addSpacer(4);
+    const tp = widget.addText(last.type); tp.textColor = last.extrap ? new Color("#f0883e") : new Color("#8b949e"); tp.font = Font.systemFont(10);
+    const ts = widget.addText(last.time); ts.textColor = new Color("#8b949e"); ts.font = Font.systemFont(9);
+  } else {
+    const none = widget.addText("No lookups yet.\nOpen app to calculate.");
+    none.textColor = new Color("#8b949e"); none.font = Font.systemFont(12);
+  }
+  Script.setWidget(widget);
+  Script.complete();
+  return;
+}
+
+// ── State ─────────────────────────────────────────────────────────────────────
+let activeKey = "DS2 (Measured)";
+
+async function doYtoAngle() {
+  const sp = splines[activeKey];
+  const ds = DS[activeKey];
+  const a = new Alert();
+  a.title = "Y -> Angle";
+  a.message = ds.label + "\nValid range: " + Y_AT_0 + "-" + Y_AT_100 + " mm";
+  a.addTextField("e.g. 36.3");
+  a.addAction("Calculate");
+  a.addCancelAction("Cancel");
+  const r = await a.present();
+  if (r !== 0) return;
+  const val = parseFloat(a.textFieldValue(0));
+  const res = new Alert();
+  if (isNaN(val)) {
+    res.title = "Invalid input";
+    res.message = "Please enter a number.";
+  } else if (val < Y_AT_0 || val > Y_AT_100) {
+    res.title = "Out of machine range";
+    res.message = "Y = " + val.toFixed(2) + " mm is outside the machine's"
+      + " 0\u00b0-100\u00b0 operating range.\n\nValid Y: " + Y_AT_0 + "-" + Y_AT_100 + " mm";
+  } else {
+    const angle  = sp.yToAngle(val);
+    const extrap = val < ds.measuredRange[0] || val > ds.measuredRange[1];
+    const meas   = ds.raw.some(d => Math.abs(d[0]-val) < 0.001);
+    const type   = meas ? "Measured" : extrap ? "Extrapolated" : "Interpolated";
+    res.title = extrap ? "Extrapolated" : "Result";
+    res.message = "Y = " + val.toFixed(2) + " mm"
+      + "\nAngle = " + angle.toFixed(2) + "\u00b0"
+      + "\nType: " + type
+      + (extrap ? "\n\nOutside measured range. Verify physically." : "");
+    saveLastLookup({
+      dataset: activeKey, y: val.toFixed(2), angle: angle.toFixed(2),
+      type: type, extrap: extrap,
+      time: new Date().toLocaleTimeString([], {hour:"2-digit", minute:"2-digit"})
+    });
+  }
+  res.addAction("OK");
+  await res.present();
+}
+
+async function doAngleToY() {
+  const sp = splines[activeKey];
+  const ds = DS[activeKey];
+  const a = new Alert();
+  a.title = "Angle -> Y";
+  a.message = ds.label + "\nValid range: " + ANGLE_MIN + "\u00b0-" + ANGLE_MAX + "\u00b0";
+  a.addTextField("e.g. 90");
+  a.addAction("Calculate");
+  a.addCancelAction("Cancel");
+  const r = await a.present();
+  if (r !== 0) return;
+  const val = parseFloat(a.textFieldValue(0));
+  const res = new Alert();
+  if (isNaN(val)) {
+    res.title = "Invalid input";
+    res.message = "Please enter a number.";
+  } else if (val < ANGLE_MIN || val > ANGLE_MAX) {
+    res.title = "Out of machine range";
+    res.message = val.toFixed(1) + "\u00b0 is outside the machine's operating range of "
+      + ANGLE_MIN + "\u00b0-" + ANGLE_MAX + "\u00b0.";
+  } else {
+    const y      = sp.angleToY(val);
+    const extrap = val < ds.measuredRange[0] || val > ds.measuredRange[1];
+    res.title = extrap ? "Extrapolated" : "Result";
+    res.message = "Angle = " + val.toFixed(2) + "\u00b0"
+      + "\nY = " + y.toFixed(3) + " mm"
+      + (extrap ? "\n\nOutside measured range. Verify physically." : "");
+    saveLastLookup({
+      dataset: activeKey, y: y.toFixed(3), angle: val.toFixed(2),
+      type: extrap ? "Extrapolated" : "Interpolated", extrap: extrap,
+      time: new Date().toLocaleTimeString([], {hour:"2-digit", minute:"2-digit"})
+    });
+  }
+  res.addAction("OK");
+  await res.present();
+}
+
+async function doTable() {
+  const sp = splines[activeKey];
+  const ds = DS[activeKey];
+  const t = new UITable();
+  t.showSeparators = true;
+  const hdr = new UITableRow();
+  hdr.isHeader = true;
+  hdr.backgroundColor = new Color("#161b22");
+  let h;
+  h = hdr.addText("Y (mm)");         h.titleColor = new Color("#8b949e"); h.titleFont = Font.boldSystemFont(12);
+  h = hdr.addText("Angle (\u00b0)"); h.titleColor = new Color("#8b949e"); h.titleFont = Font.boldSystemFont(12);
+  h = hdr.addText("Type");           h.titleColor = new Color("#8b949e"); h.titleFont = Font.boldSystemFont(12);
+  t.addRow(hdr);
+  // Table bounded by machine limits Y_AT_0 to Y_AT_100
+  const yStart = Math.ceil(Y_AT_0 * 10) / 10;
+  const yEnd   = Math.floor(Y_AT_100 * 10) / 10;
+  for (let y = yStart; y <= yEnd + 0.001; y = Math.round((y+0.1)*10)/10) {
+    const yf      = +y.toFixed(1);
+    const angle   = +sp.yToAngle(yf).toFixed(2);
+    const extrap  = yf < ds.measuredRange[0] || yf > ds.measuredRange[1];
+    const measured = ds.raw.some(d => Math.abs(d[0]-yf) < 0.001);
+    const row = new UITableRow();
+    row.height = 42;
+    row.backgroundColor = extrap ? new Color("#1e1408") : measured ? new Color("#0d1f12") : new Color("#0d1117");
+    let c;
+    c = row.addText(yf.toFixed(1));               c.titleColor = new Color("#8b949e"); c.titleFont = Font.systemFont(14);
+    c = row.addText(angle.toFixed(2) + "\u00b0"); c.titleColor = extrap ? new Color("#f0883e") : measured ? new Color("#3fb950") : new Color("#e6edf3"); c.titleFont = Font.mediumSystemFont(14);
+    c = row.addText(measured ? "MEAS" : extrap ? "EXT" : "INT");
+    c.titleColor = measured ? new Color("#3fb950") : extrap ? new Color("#f0883e") : new Color("#58a6ff");
+    c.titleFont = Font.systemFont(11);
+    t.addRow(row);
+  }
+  await t.present();
+}
+
+// ── Main menu loop ────────────────────────────────────────────────────────────
+let running = true;
+while (running) {
+  const last = loadLastLookup();
+  const m = new Alert();
+  m.title = "Press Brake Cal";
+  m.message = DS[activeKey].label
+    + "\nRange: " + Y_AT_0 + "-" + Y_AT_100 + " mm (" + ANGLE_MIN + "\u00b0-" + ANGLE_MAX + "\u00b0)"
+    + (last ? "\nLast: " + last.angle + "\u00b0 at Y=" + last.y + "mm" : "");
+  m.addAction("Y -> Angle");
+  m.addAction("Angle -> Y");
+  m.addAction("Full Table");
+  m.addCancelAction("Close");
+  const c = await m.present();
+  if      (c === 0) await doYtoAngle();
+  else if (c === 1) await doAngleToY();
+  else if (c === 2) await doTable();
+  else running = false;
+}
+
+Script.complete();
