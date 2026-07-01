@@ -73,11 +73,10 @@ function buildSpline(raw) {
 const splines = {};
 for (const key of Object.keys(DS)) splines[key] = buildSpline(DS[key].raw);
 
-// Y limits for 0° and 100° per dataset
 function getYLimits(key) {
   const sp = splines[key];
   return {
-    y0: +sp.angleToY(ANGLE_MIN).toFixed(2),
+    y0:   +sp.angleToY(ANGLE_MIN).toFixed(2),
     y100: +sp.angleToY(ANGLE_MAX).toFixed(2)
   };
 }
@@ -190,7 +189,7 @@ async function doAngleToY() {
     res.message = "Please enter a number.";
   } else if (val < ANGLE_MIN || val > ANGLE_MAX) {
     res.title = "Out of machine range";
-    res.message = val.toFixed(1) + "\u00b0 is outside the machine's operating range of "
+    res.message = val.toFixed(2) + "\u00b0 is outside the machine's operating range of "
       + ANGLE_MIN + "\u00b0-" + ANGLE_MAX + "\u00b0.";
   } else {
     const y      = sp.angleToY(val);
@@ -198,10 +197,10 @@ async function doAngleToY() {
     res.title = extrap ? "Extrapolated" : "Result";
     res.message = "Width: " + activeKey
       + "\nAngle = " + val.toFixed(2) + "\u00b0"
-      + "\nY = " + y.toFixed(3) + " mm"
+      + "\nY = " + y.toFixed(2) + " mm"
       + (extrap ? "\n\nOutside measured range. Verify physically." : "");
     saveLastLookup({
-      dataset: activeKey, y: y.toFixed(3), angle: val.toFixed(2),
+      dataset: activeKey, y: y.toFixed(2), angle: val.toFixed(2),
       type: extrap ? "Extrapolated" : "Interpolated", extrap: extrap,
       time: new Date().toLocaleTimeString([], {hour:"2-digit", minute:"2-digit"})
     });
@@ -215,7 +214,6 @@ async function doTable() {
   const t = new UITable();
   t.showSeparators = true;
 
-  // Header row: Y (mm) | <width1> | <width2> | ...
   const hdr = new UITableRow();
   hdr.isHeader = true;
   hdr.backgroundColor = new Color("#161b22");
@@ -227,7 +225,6 @@ async function doTable() {
   }
   t.addRow(hdr);
 
-  // Shared Y grid spans the union of all widths' valid 0-100deg ranges
   let yStart = Infinity, yEnd = -Infinity;
   const lims = {};
   for (const w of widths) {
@@ -245,7 +242,7 @@ async function doTable() {
     row.height = 42;
     row.backgroundColor = new Color("#0d1117");
 
-    let c = row.addText(yf.toFixed(1));
+    let c = row.addText(yf.toFixed(2));
     c.titleColor = new Color("#8b949e"); c.titleFont = Font.systemFont(14);
 
     for (const w of widths) {
@@ -253,7 +250,6 @@ async function doTable() {
       const sp  = splines[w];
       const ds  = DS[w];
       if (yf < lim.y0 || yf > lim.y100) {
-        // outside this width's machine-valid range
         c = row.addText("\u2014");
         c.titleColor = new Color("#3a4048"); c.titleFont = Font.systemFont(13);
         continue;
