@@ -24,6 +24,17 @@ const DS = {
     ],
     measuredRange: [29.93, 39.93],
     label: "21 pts · 3mm Ali · 24mm die"
+  },
+  "100mm Width": {
+    raw: [
+      [29.92,7.5],[30.44,12.8],[30.93,18.2],[31.43,23],[31.92,27.8],
+      [32.43,32],[32.92,37.5],[33.43,42],[33.92,46],[34.43,51.4],
+      [34.92,55.7],[35.44,60],[35.92,64.4],[36.44,68.5],[36.93,72.8],
+      [37.44,76.4],[37.92,79.4],[38.43,83.8],[38.92,87],[39.44,89.4],
+      [39.92,94.8]
+    ],
+    measuredRange: [29.92, 39.92],
+    label: "21 pts · 3mm Ali · 24mm die"
   }
 };
 
@@ -144,8 +155,7 @@ async function doYtoAngle() {
   const val = parseFloat(a.textFieldValue(0));
   const res = new Alert();
   if (isNaN(val)) {
-    res.title = "Invalid input";
-    res.message = "Please enter a number.";
+    res.title = "Invalid input"; res.message = "Please enter a number.";
   } else if (val < lim.y0 || val > lim.y100) {
     res.title = "Out of machine range";
     res.message = "Y = " + val.toFixed(2) + " mm is outside the machine's"
@@ -185,8 +195,7 @@ async function doAngleToY() {
   const val = parseFloat(a.textFieldValue(0));
   const res = new Alert();
   if (isNaN(val)) {
-    res.title = "Invalid input";
-    res.message = "Please enter a number.";
+    res.title = "Invalid input"; res.message = "Please enter a number.";
   } else if (val < ANGLE_MIN || val > ANGLE_MAX) {
     res.title = "Out of machine range";
     res.message = val.toFixed(2) + "\u00b0 is outside the machine's operating range of "
@@ -241,10 +250,8 @@ async function doTable() {
     const row = new UITableRow();
     row.height = 42;
     row.backgroundColor = new Color("#0d1117");
-
     let c = row.addText(yf.toFixed(2));
     c.titleColor = new Color("#8b949e"); c.titleFont = Font.systemFont(14);
-
     for (const w of widths) {
       const lim = lims[w];
       const sp  = splines[w];
