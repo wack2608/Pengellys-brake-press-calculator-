@@ -1,9 +1,9 @@
 // Press Brake Calibration — Scriptable
-// Multi-width datasets, all 3mm Aluminium, 24mm die
-// Machine limits: 0° – 100°
+// Panel Shed · PCHIP Monotonic Spline
+// Machine limits: 0 – 100 degrees
 
 const DS = {
-  "30mm Width": {
+  "Ali 3mm 30mm": {
     raw: [
       [29.93,7.5],[30.43,12.3],[30.93,17.3],[31.33,22.1],
       [31.93,27],[32.44,31.5],[32.93,36],[33.44,41],[33.93,46.5],
@@ -12,9 +12,9 @@ const DS = {
       [37.93,80.09],[38.43,84],[38.92,89.2],[39.44,91.2],[39.93,97]
     ],
     measuredRange: [29.93, 39.93],
-    label: "21 pts · 3mm Ali · 24mm die"
+    label: "21 pts | 3mm Ali | 24mm die | 30mm wide"
   },
-  "50mm Width": {
+  "Ali 3mm 50mm": {
     raw: [
       [29.93,7.5],[30.44,12.5],[30.93,17.5],[31.44,22.5],
       [31.93,27.5],[32.43,32.6],[32.93,37.3],[33.44,42.8],
@@ -23,9 +23,9 @@ const DS = {
       [37.93,80.5],[38.44,84.2],[38.93,87.1],[39.44,90.2],[39.93,97]
     ],
     measuredRange: [29.93, 39.93],
-    label: "21 pts · 3mm Ali · 24mm die"
+    label: "21 pts | 3mm Ali | 24mm die | 50mm wide"
   },
-  "100mm Width": {
+  "Ali 3mm 100mm": {
     raw: [
       [29.92,7.5],[30.44,12.8],[30.93,18.2],[31.43,23],[31.92,27.8],
       [32.43,32],[32.92,37.5],[33.43,42],[33.92,46],[34.43,51.4],
@@ -34,14 +34,28 @@ const DS = {
       [39.92,94.8]
     ],
     measuredRange: [29.92, 39.92],
-    label: "21 pts · 3mm Ali · 24mm die"
+    label: "21 pts | 3mm Ali | 24mm die | 100mm wide"
+  },
+  "MS 2mm 100mm 16die": {
+    raw: [
+      [31.44,17.4],[31.93,25.3],[32.44,33.4],[32.93,40.3],
+      [33.44,46.7],[33.92,46.5],[34.4,61.6],[34.93,69.3],
+      [35.44,74.0],[35.93,79.4],[36.44,85.4],[36.93,92.6],
+      [37.44,97.6],[37.93,95.7]
+    ],
+    measuredRange: [31.44, 37.93],
+    label: "14 pts | 2mm MS | 16mm die | 100mm wide"
   }
 };
+
+// Pending (insufficient data):
+// 3mm MS 52mm wide 24die: [31.92,27.8],[33.43,44.4],[33.92,48.6]
+// 3mm MS 80mm wide 24die: [33.43,44.4]
+// 3mm Ali 150mm wide 24die: [29.97,7],[30.43,12.1],[30.93,17.5],[31.44,22.1],[31.92,27]
 
 const ANGLE_MIN = 0;
 const ANGLE_MAX = 100;
 
-// ── PCHIP ─────────────────────────────────────────────────────────────────────
 function pchipD(x, y) {
   const n = x.length, d = [], h = [], delta = [];
   for (let i = 0; i < n-1; i++) { h[i] = x[i+1]-x[i]; delta[i] = (y[i+1]-y[i])/h[i]; }
@@ -92,7 +106,6 @@ function getYLimits(key) {
   };
 }
 
-// ── Persistence ───────────────────────────────────────────────────────────────
 const STORE_KEY = "pressbrake_last";
 function saveLastLookup(obj) { Keychain.set(STORE_KEY, JSON.stringify(obj)); }
 function loadLastLookup() {
@@ -100,7 +113,6 @@ function loadLastLookup() {
   return null;
 }
 
-// ── Widget ────────────────────────────────────────────────────────────────────
 if (config.runsInWidget) {
   const widget = new ListWidget();
   widget.backgroundColor = new Color("#0d1117");
@@ -125,19 +137,42 @@ if (config.runsInWidget) {
   return;
 }
 
-// ── State ─────────────────────────────────────────────────────────────────────
-let activeKey = "30mm Width";
+let activeKey = "Ali 3mm 30mm";
 
+// Material picker: step 1 pick material+thickness, step 2 pick width+die
 async function pickDataset() {
-  const a = new Alert();
-  a.title = "Select Material Width";
-  a.message = "Active: " + activeKey;
-  for (const key of Object.keys(DS)) {
-    a.addAction(key + (key === activeKey ? " \u2713" : ""));
+  const keys = Object.keys(DS);
+  // Extract unique material prefixes (everything before last segment)
+  const matGroups = {};
+  for (const k of keys) {
+    const parts = k.split(" ");
+    const mat = parts[0] + " " + parts[1]; // e.g. "Ali 3mm" or "MS 2mm"
+    if (!matGroups[mat]) matGroups[mat] = [];
+    matGroups[mat].push(k);
   }
-  a.addCancelAction("Cancel");
-  const r = await a.present();
-  if (r >= 0) activeKey = Object.keys(DS)[r];
+  const mats = Object.keys(matGroups);
+
+  const a1 = new Alert();
+  a1.title = "Step 1 of 2 - Material";
+  a1.message = "Active: " + activeKey;
+  for (const m of mats) a1.addAction(m);
+  a1.addCancelAction("Cancel");
+  const r1 = await a1.present();
+  if (r1 < 0) return;
+  const chosenMat = mats[r1];
+
+  const matching = matGroups[chosenMat];
+  const a2 = new Alert();
+  a2.title = "Step 2 of 2 - Width / Die";
+  a2.message = chosenMat;
+  for (const k of matching) {
+    const parts = k.split(" ");
+    const suffix = parts.slice(2).join(" ");
+    a2.addAction(suffix + (k === activeKey ? " \u2713" : ""));
+  }
+  a2.addCancelAction("Cancel");
+  const r2 = await a2.present();
+  if (r2 >= 0) activeKey = matching[r2];
 }
 
 async function doYtoAngle() {
@@ -146,7 +181,7 @@ async function doYtoAngle() {
   const lim = getYLimits(activeKey);
   const a = new Alert();
   a.title = "Y -> Angle";
-  a.message = activeKey + " · " + ds.label + "\nValid range: " + lim.y0 + "-" + lim.y100 + " mm";
+  a.message = ds.label + "\nValid: " + lim.y0 + " - " + lim.y100 + " mm";
   a.addTextField("e.g. 36.3");
   a.addAction("Calculate");
   a.addCancelAction("Cancel");
@@ -158,15 +193,14 @@ async function doYtoAngle() {
     res.title = "Invalid input"; res.message = "Please enter a number.";
   } else if (val < lim.y0 || val > lim.y100) {
     res.title = "Out of machine range";
-    res.message = "Y = " + val.toFixed(2) + " mm is outside the machine's"
-      + " 0\u00b0-100\u00b0 operating range.\n\nValid Y: " + lim.y0 + "-" + lim.y100 + " mm";
+    res.message = "Y = " + val.toFixed(2) + " mm is outside 0-100 degree range.\nValid Y: " + lim.y0 + " - " + lim.y100 + " mm";
   } else {
     const angle  = sp.yToAngle(val);
     const extrap = val < ds.measuredRange[0] || val > ds.measuredRange[1];
     const meas   = ds.raw.some(d => Math.abs(d[0]-val) < 0.001);
     const type   = meas ? "Measured" : extrap ? "Extrapolated" : "Interpolated";
     res.title = extrap ? "Extrapolated" : "Result";
-    res.message = "Width: " + activeKey
+    res.message = activeKey
       + "\nY = " + val.toFixed(2) + " mm"
       + "\nAngle = " + angle.toFixed(2) + "\u00b0"
       + "\nType: " + type
@@ -186,7 +220,7 @@ async function doAngleToY() {
   const ds = DS[activeKey];
   const a = new Alert();
   a.title = "Angle -> Y";
-  a.message = activeKey + " · " + ds.label + "\nValid range: " + ANGLE_MIN + "\u00b0-" + ANGLE_MAX + "\u00b0";
+  a.message = ds.label + "\nValid: " + ANGLE_MIN + "\u00b0 - " + ANGLE_MAX + "\u00b0";
   a.addTextField("e.g. 90");
   a.addAction("Calculate");
   a.addCancelAction("Cancel");
@@ -198,13 +232,12 @@ async function doAngleToY() {
     res.title = "Invalid input"; res.message = "Please enter a number.";
   } else if (val < ANGLE_MIN || val > ANGLE_MAX) {
     res.title = "Out of machine range";
-    res.message = val.toFixed(2) + "\u00b0 is outside the machine's operating range of "
-      + ANGLE_MIN + "\u00b0-" + ANGLE_MAX + "\u00b0.";
+    res.message = val.toFixed(2) + "\u00b0 is outside 0-100 degree range.";
   } else {
     const y      = sp.angleToY(val);
     const extrap = val < ds.measuredRange[0] || val > ds.measuredRange[1];
     res.title = extrap ? "Extrapolated" : "Result";
-    res.message = "Width: " + activeKey
+    res.message = activeKey
       + "\nAngle = " + val.toFixed(2) + "\u00b0"
       + "\nY = " + y.toFixed(2) + " mm"
       + (extrap ? "\n\nOutside measured range. Verify physically." : "");
@@ -219,26 +252,54 @@ async function doAngleToY() {
 }
 
 async function doTable() {
-  const widths = Object.keys(DS);
+  const keys = Object.keys(DS);
+
+  // Ask which material group to view
+  const matGroups = {};
+  for (const k of keys) {
+    const parts = k.split(" ");
+    const mat = parts[0] + " " + parts[1];
+    if (!matGroups[mat]) matGroups[mat] = [];
+    matGroups[mat].push(k);
+  }
+  const mats = Object.keys(matGroups);
+  const activeMat = activeKey.split(" ")[0] + " " + activeKey.split(" ")[1];
+
+  let chosenMat = activeMat;
+  if (mats.length > 1) {
+    const a = new Alert();
+    a.title = "Full Table";
+    a.message = "Select material group";
+    for (const m of mats) a.addAction(m + (m === activeMat ? " \u2713" : ""));
+    a.addCancelAction("Cancel");
+    const r = await a.present();
+    if (r < 0) return;
+    chosenMat = mats[r];
+  }
+
+  const groupKeys = matGroups[chosenMat];
   const t = new UITable();
   t.showSeparators = true;
 
+  // Header row
   const hdr = new UITableRow();
   hdr.isHeader = true;
   hdr.backgroundColor = new Color("#161b22");
   let h = hdr.addText("Y (mm)");
   h.titleColor = new Color("#8b949e"); h.titleFont = Font.boldSystemFont(12);
-  for (const w of widths) {
-    h = hdr.addText(w.replace(" Width",""));
+  for (const k of groupKeys) {
+    const parts = k.split(" ");
+    h = hdr.addText(parts.slice(2).join(" "));
     h.titleColor = new Color("#58a6ff"); h.titleFont = Font.boldSystemFont(12);
   }
   t.addRow(hdr);
 
+  // Y range: union of all valid ranges in this group
   let yStart = Infinity, yEnd = -Infinity;
   const lims = {};
-  for (const w of widths) {
-    const lim = getYLimits(w);
-    lims[w] = lim;
+  for (const k of groupKeys) {
+    const lim = getYLimits(k);
+    lims[k] = lim;
     yStart = Math.min(yStart, lim.y0);
     yEnd   = Math.max(yEnd, lim.y100);
   }
@@ -252,10 +313,10 @@ async function doTable() {
     row.backgroundColor = new Color("#0d1117");
     let c = row.addText(yf.toFixed(2));
     c.titleColor = new Color("#8b949e"); c.titleFont = Font.systemFont(14);
-    for (const w of widths) {
-      const lim = lims[w];
-      const sp  = splines[w];
-      const ds  = DS[w];
+    for (const k of groupKeys) {
+      const lim = lims[k];
+      const sp  = splines[k];
+      const ds  = DS[k];
       if (yf < lim.y0 || yf > lim.y100) {
         c = row.addText("\u2014");
         c.titleColor = new Color("#3a4048"); c.titleFont = Font.systemFont(13);
@@ -273,20 +334,19 @@ async function doTable() {
   await t.present();
 }
 
-// ── Main menu loop ────────────────────────────────────────────────────────────
 let running = true;
 while (running) {
   const last = loadLastLookup();
   const lim = getYLimits(activeKey);
   const m = new Alert();
   m.title = "Press Brake Cal";
-  m.message = "Width: " + activeKey + "\n" + DS[activeKey].label
-    + "\nRange: " + lim.y0 + "-" + lim.y100 + " mm (" + ANGLE_MIN + "\u00b0-" + ANGLE_MAX + "\u00b0)"
+  m.message = activeKey + "\n" + DS[activeKey].label
+    + "\nRange: " + lim.y0 + " - " + lim.y100 + " mm"
     + (last ? "\nLast: " + last.angle + "\u00b0 at Y=" + last.y + "mm" : "");
   m.addAction("Y -> Angle");
   m.addAction("Angle -> Y");
   m.addAction("Full Table");
-  m.addAction("Switch Width");
+  m.addAction("Switch Material/Width");
   m.addCancelAction("Close");
   const c = await m.present();
   if      (c === 0) await doYtoAngle();
